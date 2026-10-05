@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    container_name: neon-s3-todo
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    restart: unless-stopped

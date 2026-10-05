@@ -1,0 +1,17 @@
+{
+  "name": "neon-s3-todo-app",
+  "version": "1.0.0",
+  "description": "Basic Node.js Todo app using Neon PostgreSQL with daily S3 backups",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.901.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "node-cron": "^4.2.1",
+    "pg": "^8.16.3"
+  }
+}
