@@ -3,9 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const { Pool } = require("pg");
 const cron = require("node-cron");
-const { execFile } = require("child_process");
-const fs = require("fs");
-const path = require("path");
+
+
 const {
   S3Client,
   PutObjectCommand
@@ -163,88 +162,68 @@ app.delete("/todos/:id", async (req, res) => {
   }
 });
 
-// ---------- PostgreSQL -> S3 backup ----------
+// ---------- Neon PostgreSQL -> JSON -> S3 backup ----------
 
-function createDatabaseDump(outputFile) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "pg_dump",
-      [
-        "--dbname",
-        DATABASE_URL,
-        "--format=custom",
-        "--file",
-        outputFile
-      ],
-      (error, stdout, stderr) => {
-        if (error) {
-          console.error("pg_dump stderr:", stderr);
-          return reject(error);
-        }
+async function createJsonBackup() {
+  const result = await pool.query(`
+    SELECT *
+    FROM todos
+    ORDER BY id ASC
+  `);
 
-        resolve(outputFile);
-      }
-    );
-  });
+  const backup = {
+    database: "neondb",
+    table: "todos",
+    backup_time: new Date().toISOString(),
+    record_count: result.rows.length,
+    records: result.rows
+  };
+
+  return JSON.stringify(backup, null, 2);
 }
 
-async function uploadBackupToS3(filePath) {
-  const fileName = path.basename(filePath);
+async function uploadJsonBackupToS3() {
+  console.log("Starting JSON backup...");
 
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: `neon-backups/${fileName}`,
-      Body: fs.createReadStream(filePath),
-      ContentType: "application/octet-stream"
-    })
-  );
+  // Get all records from Neon
+  const jsonBackup = await createJsonBackup();
 
-  return `s3://${S3_BUCKET}/neon-backups/${fileName}`;
-}
-
-async function runBackup() {
-  const backupDir = path.join(process.cwd(), "backups");
-
-  fs.mkdirSync(backupDir, { recursive: true });
-
+  // Create filename
   const timestamp = new Date()
     .toISOString()
     .replace(/[:.]/g, "-");
 
-  const backupFile = path.join(
-    backupDir,
-    `neondb-${timestamp}.dump`
+  const fileName = `todos-${timestamp}.json`;
+
+  // Upload JSON directly to S3
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: `neon-backups/${fileName}`,
+      Body: jsonBackup,
+      ContentType: "application/json"
+    })
   );
 
-  try {
-    console.log("Starting PostgreSQL backup...");
+  const s3Path = `s3://${S3_BUCKET}/neon-backups/${fileName}`;
 
-    await createDatabaseDump(backupFile);
+  console.log(`JSON backup uploaded successfully: ${s3Path}`);
 
-    const s3Path = await uploadBackupToS3(backupFile);
-
-    console.log(`Backup uploaded successfully: ${s3Path}`);
-
-    fs.unlinkSync(backupFile);
-
-    return s3Path;
-  } catch (error) {
-    console.error("Backup failed:", error);
-    throw error;
-  }
+  return s3Path;
 }
 
-// Manual backup endpoint for testing.
+// Manual backup endpoint
 app.post("/backup", async (req, res) => {
   try {
-    const location = await runBackup();
+    const location = await uploadJsonBackupToS3();
 
     res.json({
-      message: "Backup completed",
+      message: "JSON backup completed",
       location
     });
   } catch (error) {
+    console.error("JSON backup failed:", error);
+
     res.status(500).json({
       error: "Backup failed",
       message: error.message
@@ -252,14 +231,15 @@ app.post("/backup", async (req, res) => {
   }
 });
 
-// Every 24 hours at midnight according to the container's timezone.
+// ---------- 24-hour backup scheduler ----------
+
 cron.schedule(BACKUP_CRON, async () => {
-  console.log("24-hour backup job triggered.");
+  console.log("24-hour JSON backup job triggered.");
 
   try {
-    await runBackup();
+    await uploadJsonBackupToS3();
   } catch (error) {
-    console.error("Scheduled backup failed:", error);
+    console.error("Scheduled JSON backup failed:", error);
   }
 });
 
