@@ -1,0 +1,49 @@
+name: Neon Primary S3 Backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Backup Neon
+        env:
+          DATABASE_URL: ${{ secrets.PRIMARY_DATABASE_URL }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+        run: |
+          set -euo pipefail
+
+          TS=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+
+          docker run --rm \
+            -e DATABASE_URL \
+            -v "$GITHUB_WORKSPACE:/backup" \
+            postgres:18 \
+            pg_dump "$DATABASE_URL" \
+            --format=custom \
+            --no-owner \
+            --no-acl \
+            --file="/backup/neon-primary-${TS}.dump"
+
+          aws s3 cp \
+            "neon-primary-${TS}.dump" \
+            "s3://${S3_BUCKET}/neon-dr/primary/neon-primary-${TS}.dump"
+
+          aws s3 ls \
+            "s3://${S3_BUCKET}/neon-dr/primary/"
+
+          rm -f "neon-primary-${TS}.dump"
