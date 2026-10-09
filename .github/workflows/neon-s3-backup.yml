@@ -2,8 +2,7 @@ name: Neon Primary S3 Backup
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "* * * * *"
+  
 
 permissions:
   contents: read
